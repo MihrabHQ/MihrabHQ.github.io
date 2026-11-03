@@ -1,11 +1,13 @@
-# Mihrab demo
+# Mihrab Web
 
-A browser build of [Mihrab](https://mihrab.elghamri.se/) — prayer times and the Qur'an — served at
-https://mihrabhq.github.io/mihrab-demo/.
+[Mihrab](https://mihrab.elghamri.se/) in your browser, at **https://mihrabhq.github.io/**: prayer times for
+where you are, with browser notifications at each prayer, and the Qur'an — the Madinah muṣḥaf with tajwīd
+colours, the IndoPak, Warsh, Qālūn and Shuʿbah texts, hard-word meanings, and Husary's recitation
+highlighted word by word.
 
-Everything runs in the browser. The muṣḥaf and tajwīd fonts, the IndoPak, Warsh, Qālūn and Shuʿbah
-texts, Husary's word timings and the hard-word meanings are preloaded under `files/`; recitation
-streams from everyayah.com.
+Everything you set is kept in your browser. The muṣḥaf and tajwīd fonts, the four riwāyāt, the word timings
+and the word meanings are served from `files/`; recitation streams from everyayah.com. See the
+[privacy policy](https://github.com/MihrabHQ/Mihrab/blob/main/PRIVACY_POLICY.md) ("Mihrab Web").
 
-This repository is generated. The source is in [MihrabHQ/Mihrab](https://github.com/MihrabHQ/Mihrab)
-(`desktop/scripts/build-demo.js`).
+This repository is generated. The source is [MihrabHQ/Mihrab](https://github.com/MihrabHQ/Mihrab):
+`npx webpack --mode production --env web` in `desktop/`, then `desktop/scripts/build-web.js`.
