@@ -1,0 +1,155 @@
+name: Publish
+
+# Mihrab Web, kept on the latest Mihrab release.
+#
+# Every hour it asks MihrabHQ/Mihrab for its latest release. When that tag is
+# not the one this site was built from (version.txt), it checks the tag out,
+# builds the web app (`npx webpack --mode production --env web` in desktop/),
+# and assembles the site with that tag's own desktop/scripts/build-web.js —
+# reusing the muṣḥaf, tajwīd, riwāyāt and word timings this site already
+# serves from files/, which change with the data, not with a release. Then it
+# commits the result here and asks Pages to build it.
+#
+# By hand: Actions → Publish → Run workflow. "ref" builds another tag or
+# branch (main, to try a change before a release); "dry run" builds and checks
+# everything and publishes nothing; "force" rebuilds a version already served.
+#
+# Nothing to set up: the repository's own token commits here.
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Build this tag or branch of MihrabHQ/Mihrab instead of the latest release'
+        type: string
+        default: ''
+      dry_run:
+        description: 'Build and check, publish nothing'
+        type: boolean
+        default: false
+      force:
+        description: 'Rebuild even if this version is already served'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+  actions: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  SOURCE: MihrabHQ/Mihrab
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+      ref: ${{ steps.check.outputs.ref }}
+    steps:
+      # A scheduled workflow in a quiet repository is switched off after 60
+      # days; re-enabling it on every run keeps the hourly check alive.
+      - name: Keep the schedule alive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/publish.yml/enable" || true
+
+      - name: Is there something new?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.ref }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          ref=${WANT:-$(gh release view -R "$SOURCE" --json tagName --jq .tagName)}
+          served=$(gh api "repos/${{ github.repository }}/contents/version.txt" --jq .content 2>/dev/null | base64 -d 2>/dev/null | tr -d '[:space:]' || true)
+          echo "latest: $ref; served: ${served:-unknown}"
+          # A release from before Mihrab Web has nothing to build it with.
+          if ! gh api "repos/$SOURCE/contents/desktop/scripts/build-web.js?ref=$ref" --silent 2>/dev/null; then
+            echo "$ref predates Mihrab Web: the site stays as it is."
+            echo "go=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -z "$WANT" ] && [ "$served" = "$ref" ] && [ "$FORCE" != "true" ]; then
+            echo "already served."
+            echo "go=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "go=true" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: check
+    if: needs.check.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      REF: ${{ needs.check.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: site
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE }}
+          ref: ${{ env.REF }}
+          path: mihrab
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            mihrab/package-lock.json
+            mihrab/desktop/package-lock.json
+
+      - name: Dependencies
+        env:
+          # The web app needs webpack, not Electron's binary.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: |
+          (cd mihrab && npm ci --no-audit)
+          (cd mihrab/desktop && npm ci --no-audit --include=dev)
+
+      - name: Build the web app
+        working-directory: mihrab/desktop
+        run: npm run bundle && npx webpack --mode production --env web
+
+      # build-web.js reads the Qur'an's files from an app profile and empties
+      # the site folder before it writes; this site's own files/ is that
+      # profile, moved out of the way first. Its own .github goes aside too.
+      - name: Assemble the site
+        run: |
+          profile="$RUNNER_TEMP/profile"; mkdir -p "$profile"
+          mv site/files/Documents "$profile/Documents"
+          cp -r site/.github "$RUNNER_TEMP/keep-github"
+          node mihrab/desktop/scripts/build-web.js --profile "$profile" --out "$GITHUB_WORKSPACE/site"
+          rm -rf site/.github && cp -r "$RUNNER_TEMP/keep-github" site/.github
+          echo "$REF" > site/version.txt
+          test -s site/index.html && test -s site/files/index.json
+          du -sh site --exclude=.git
+
+      - name: What changed
+        working-directory: site
+        run: |
+          git add -A
+          git status --short -- . ':!files' | head -40
+          echo "$(git status --short -- files | wc -l) paths changed under files/"
+
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        working-directory: site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --cached --quiet; then echo "nothing changed"; exit 0; fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "Mihrab Web $REF"
+          git push -q origin HEAD:main
+          # A push by this token starts no Pages build on its own: ask for one.
+          gh api -X POST "repos/${{ github.repository }}/pages/builds" --silent

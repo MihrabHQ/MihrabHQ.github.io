@@ -11,3 +11,5 @@ and the word meanings are served from `files/`; recitation streams from everyaya
 
 This repository is generated. The source is [MihrabHQ/Mihrab](https://github.com/MihrabHQ/Mihrab):
 `npx webpack --mode production --env web` in `desktop/`, then `desktop/scripts/build-web.js`.
+`.github/workflows/publish.yml` does both from each new release, within the hour, and
+`version.txt` names the release the site was built from.
