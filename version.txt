@@ -1,1 +1,1 @@
-data-translation-ur.junagarhi
+v2.36.0
